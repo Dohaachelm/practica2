@@ -1,0 +1,195 @@
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <fcntl.h>
+#include <sys/types.h>
+#include <sys/wait.h>
+#include <signal.h>
+#include <errno.h>
+
+#define KTAM 20
+#define KPUERTO 9999
+
+/* SERVIDOR CONCURRENTE.
+   1- El padre espera conexiones en accept.
+   2- Cuando llega un cliente, crea un hijo con fork.
+   3- El hijo atiende al cliente y termina.
+   4- El padre sigue aceptando clientes.
+*/
+
+int main(void) {
+
+    socklen_t tam;
+    ssize_t leidos, enviados, escritos;
+
+    struct sockaddr_in serverAddress, clientAddress;
+
+    int sock,          // Socket con el que escucho
+        newSock,       // Socket para comunicarme con el cliente
+        fichOrigen,
+        opcion = 1;
+
+    char buffer[KTAM];
+
+    pid_t pid;
+
+    // CREAR SOCKET
+    sock = socket(AF_INET, SOCK_STREAM, 0);
+
+    if (sock < 0) {
+        perror("Error. No se pudo abrir el socket");
+        return 1;
+    }
+
+    // INICIALIZAR ESTRUCTURA DEL SERVIDOR
+    bzero((char *) &serverAddress, sizeof(serverAddress));
+
+    serverAddress.sin_port = htons(KPUERTO);
+    serverAddress.sin_family = AF_INET;
+    serverAddress.sin_addr.s_addr = INADDR_ANY;
+
+    setsockopt(sock, SOL_SOCKET, SO_REUSEADDR,
+               &opcion, sizeof(opcion));
+
+    // VINCULAR SOCKET AL PUERTO
+    if (bind(sock, (struct sockaddr *) &serverAddress,
+             sizeof(serverAddress)) < 0) {
+
+        perror("Error no se pudo vincular el socket");
+        close(sock);
+        return 1;
+    }
+
+    // ESCUCHAR CONEXIONES
+    if (listen(sock, 5) < 0) {
+
+        perror("Error en listen");
+        close(sock);
+        return 1;
+    }
+
+    signal(SIGCHLD, SIG_IGN);
+    signal(SIGPIPE, SIG_IGN);
+
+    printf("Servidor escuchando en el puerto %d\n", KPUERTO);
+
+    // ESPERAR CONEXIONES
+    do {
+
+        tam = sizeof(clientAddress);
+
+        newSock = accept(sock,
+                         (struct sockaddr *) &clientAddress,
+                         &tam);
+
+        if (newSock < 0) {
+
+            if (errno == EINTR)
+                continue;
+
+            perror("Error al aceptar la conexion");
+        }
+        else {
+
+            printf("Aceptando conexion\n");
+            fflush(stdout);
+
+            // CREAR PROCESO HIJO
+            pid = fork();
+
+            if (pid == 0) {
+
+                // PROCESO HIJO
+                close(sock);
+
+                printf("Hijo acepta conexion\n");
+
+                // ABRIR FICHERO
+                fichOrigen = open("Google.html", O_RDONLY);
+
+                if (fichOrigen < 0) {
+
+                    perror("Error al abrir el fichero");
+
+                }
+                else {
+
+                    // TRANSMISION DEL FICHERO
+                    leidos = read(fichOrigen, buffer, KTAM);
+
+                    while (leidos > 0) {
+
+                        printf("He leido del fichero un bloque de %zd bytes\n",
+                               leidos);
+
+                        enviados = 0;
+
+                        while (enviados < leidos) {
+
+                            escritos = write(newSock,
+                                             buffer + enviados,
+                                             leidos - enviados);
+
+                            if (escritos < 0) {
+
+                                if (errno == EINTR)
+                                    continue;
+
+                                perror("Error al enviar al cliente");
+                                break;
+                            }
+
+                            if (escritos == 0)
+                                break;
+
+                            enviados += escritos;
+                        }
+
+                        if (enviados < leidos)
+                            break;
+
+                        leidos = read(fichOrigen, buffer, KTAM);
+                    }
+
+                    if (leidos < 0)
+                        perror("Error al leer el fichero");
+
+                    printf("Ya he acabado la transmision\n");
+
+                    close(fichOrigen);
+                }
+
+                printf("Soy el hijo que atendia la peticion, ya he acabado\n");
+
+                close(newSock);
+
+                fflush(stdout);
+
+                _exit(0);
+            }
+
+            else if (pid > 0) {
+
+                // PROCESO PADRE
+                close(newSock);
+
+            }
+
+            else {
+
+                perror("Error en fork");
+                close(newSock);
+
+            }
+        }
+
+    } while (1);
+
+    close(sock);
+
+    return 0;
+}

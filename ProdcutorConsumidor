@@ -1,0 +1,66 @@
+
+int buffer[5];
+
+int entrada = 0;
+int salida = 0;
+
+semaphore vacios;
+semaphore llenos;
+semaphore mutex;
+
+void Productor()
+{
+    int i;
+    int dato;
+
+    for (i = 1; i <= 10; i++)
+    {
+        dato = i * 10;
+
+        wait(vacios);
+        wait(mutex);
+
+        buffer[entrada] = dato;
+
+        cout << "Productor introduce: " << dato << endl;
+
+        entrada = (entrada + 1) % 5;
+
+        signal(mutex);
+        signal(llenos);
+    }
+}
+
+void Consumidor()
+{
+    int i;
+    int dato;
+
+    for (i = 1; i <= 10; i++)
+    {
+        wait(llenos);
+        wait(mutex);
+
+        dato = buffer[salida];
+
+        cout << "Consumidor recoge: " << dato << endl;
+
+        salida = (salida + 1) % 5;
+
+        signal(mutex);
+        signal(vacios);
+    }
+}
+
+void main()
+{
+    initialsem(vacios, 5);
+    initialsem(llenos, 0);
+    initialsem(mutex, 1);
+
+    cobegin
+    {
+        Productor();
+        Consumidor();
+    }
+}
